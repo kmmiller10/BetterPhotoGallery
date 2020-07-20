@@ -1,12 +1,10 @@
 package me.kmmiller.better.photo.gallery
 
 import android.Manifest
-import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.net.Uri
 import android.os.Bundle
-import android.provider.MediaStore
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -25,6 +23,9 @@ import kotlinx.coroutines.withContext
 import me.kmmiller.baseui.KmmBaseFragment
 import me.kmmiller.better.photo.gallery.databinding.PhotoGridFragBinding
 import me.kmmiller.better.photo.gallery.extensions.createGridItem
+import me.kmmiller.better.photo.gallery.extensions.getMediaStorePhotos
+import me.kmmiller.better.photo.gallery.extensions.getPhotoDirs
+import me.kmmiller.better.photo.gallery.extensions.linkPhotosToDir
 
 class PhotoGridFragment : KmmBaseFragment() {
     private lateinit var binding: PhotoGridFragBinding
@@ -55,27 +56,34 @@ class PhotoGridFragment : KmmBaseFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         with(binding.photoGrid) {
-            adapter = PhotoGridAdapter()
+            adapter = GridAdapter()
             onItemClickListener = AdapterView.OnItemClickListener { _, _, position, _ ->
-                    val item = viewModel.photos[position]
+                    val item = viewModel.gridItems[position]
 
-                    /*if(item.isDir) {
-                        openDirectoryAndLoadFiles(item.path)
+                    if(item.isDir) {
+                        val dir = viewModel.dirs.firstOrNull { it.id == item.dirId} ?: return@OnItemClickListener
+                        updateAdapter(dir.id)
                     } else {
-                        // Todo display image
-                        Log.d("PhotoGridFrag", "Display Image: ${item.path.substringAfterLast("/")}")
-                    }*/
+                        val photo = viewModel.photos.firstOrNull { it.id == item.photoId} ?: return@OnItemClickListener
+                        // todo
+                        Log.d(PhotoGridFragment::class.java.simpleName, "Open Photo: ${photo.name}")
+                    }
                 }
         }
 
-        if(checkStoragePermissions()) {
-            getPhotos()
-        } else {
-            ActivityCompat.requestPermissions(
-                requireActivity(),
-                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                STORAGE_REQUEST_CODE
-            )
+        if(savedInstanceState == null) {
+            if (checkStoragePermissions()) {
+                getPhotosAndDirs()
+            } else {
+                ActivityCompat.requestPermissions(
+                    requireActivity(),
+                    arrayOf(
+                        Manifest.permission.READ_EXTERNAL_STORAGE,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    ),
+                    STORAGE_REQUEST_CODE
+                )
+            }
         }
     }
 
@@ -84,165 +92,79 @@ class PhotoGridFragment : KmmBaseFragment() {
         updateAdapter()
     }
 
-    private fun checkStoragePermissions(): Boolean {
-        return PackageManager.PERMISSION_GRANTED == requireContext().checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
-                && PackageManager.PERMISSION_GRANTED == requireContext().checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+    private fun updateAdapter(dirId: String = "") {
+        viewModel.gridItems.clear()
+        viewModel.gridItems.addAll(buildGridItems(dirId))
+        (binding.photoGrid.adapter as? GridAdapter)?.notifyDataSetChanged()
     }
 
-    private fun updateAdapter() {
-        (binding.photoGrid.adapter as? PhotoGridAdapter)?.notifyDataSetChanged()
+    private fun buildGridItems(dirId: String): ArrayList<GridItem> {
+        val cr = activity?.contentResolver ?: return arrayListOf()
+        val gridItems = ArrayList<GridItem>()
+
+        if(dirId.isEmpty()) {
+            // At root level, show albums and root files
+            // Add folders first
+            val sortedDirs = viewModel.dirs.sortedBy { it.name }
+            for(dir in sortedDirs) {
+                gridItems.add(dir.createGridItem())
+            }
+
+            // Add root photos - id is not present in any directory
+            val sortedPhotos = viewModel.photos.filter { photo ->
+                viewModel.dirs.none { it.childPhotoIds.contains(photo.id)}
+            }.sortedBy { it.name }
+            for(photo in sortedPhotos) {
+                gridItems.add(photo.createGridItem(cr))
+            }
+        } else {
+            val dir = viewModel.dirs.first { it.id == dirId }
+            val sortedPhotos = viewModel.photos.filter { photo ->
+                dir.childPhotoIds.contains(photo.id)
+            }.sortedBy { it.name }
+            for(photo in sortedPhotos) {
+                gridItems.add(photo.createGridItem(cr))
+            }
+        }
+        return gridItems
     }
 
-    private fun getPhotos() {
+    private fun getPhotosAndDirs() {
+        viewModel.photos.clear()
+        viewModel.dirs.clear()
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val photos = getPhotosFromContentResolver() // Detached list, write to realm
+            val photos = activity?.contentResolver?.getMediaStorePhotos() ?: arrayListOf() // Detached list, write to realm
+            var directories = ArrayList<DirectoryObject>()
+            activity?.getPhotoDirs()?.let { dirs ->
+                directories = dirs
+            }
+
             withContext(Dispatchers.Main) {
                 realm?.executeTransactionAsync { rlm ->
+                    // Copy photos to realm
                     photos.forEach { photo ->
                         rlm.copyToRealmOrUpdate(photo)
                     }
-                }
-
-                activity?.contentResolver?.let { cr ->
-                    photos.forEach { photo ->
-                        viewModel.photos.add(photo.createGridItem(cr))
+                    // Copy dirs to realm
+                    directories.forEach { dir ->
+                        // Link child photos to parent directory
+                        dir.linkPhotosToDir(rlm)
+                        rlm.copyToRealmOrUpdate(dir)
                     }
                 }
+
+                viewModel.photos.addAll(photos)
+                viewModel.dirs.addAll(directories)
 
                 updateAdapter()
             }
         }
     }
 
-    /**
-     * Accesses media store and pulls in photos.
-     * Content resolver info: https://developer.android.com/training/data-storage/shared/media
-     * Must run on worker thread, see coroutine usage: https://developer.android.com/kotlin/coroutines
-     */
-    private suspend fun getPhotosFromContentResolver(index: Int = 0, count: Int = 20): ArrayList<PhotoObject> {
-        val contentResolver = activity?.contentResolver ?: return arrayListOf()
-        val projection = arrayOf(
-            MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.WIDTH,
-            MediaStore.Images.Media.HEIGHT,
-            MediaStore.Images.Media.DISPLAY_NAME,
-            MediaStore.Images.Media.MIME_TYPE,
-            MediaStore.Images.Media.DATE_ADDED,
-            MediaStore.Images.Media.DATE_MODIFIED,
-            MediaStore.Images.Media.DEFAULT_SORT_ORDER
-        )
-
-        val selection = "" //""${MediaStore.Images.Media.MIME_TYPE} == ? "
-        val selectionArgs = arrayOf<String>()
-
-        val sortOrder = "${MediaStore.Images.Media.DISPLAY_NAME} ASC"
-
-        val query = contentResolver.query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            projection,
-            selection,
-            selectionArgs,
-            sortOrder
-        )
-
-        val photos = ArrayList<PhotoObject>()
-        query?.use { cursor ->
-            // Cache column indices
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            val widthColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.WIDTH)
-            val heightColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)
-            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-            val mimeTypeColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
-            val addedColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
-            val modifiedColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED)
-
-            for(i in 0 until count) {
-                cursor.moveToNext()
-                val cId = cursor.getLong(idColumn)
-                val contentUri: Uri = ContentUris.withAppendedId(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    cId
-                )
-
-                val photoObject = PhotoObject().apply {
-                    id = cId
-                    width = cursor.getInt(widthColumn)
-                    height = cursor.getInt(heightColumn)
-                    uriString = contentUri.toString()
-                    name = cursor.getString(nameColumn)
-                    mimeType = cursor.getString(mimeTypeColumn)
-                    added = cursor.getString(addedColumn)
-                    modified = cursor.getString(modifiedColumn)
-                }
-
-                photos.add(photoObject)
-            }
-        }
-
-        return withContext(Dispatchers.IO) {
-            photos
-        }
+    private fun checkStoragePermissions(): Boolean {
+        return PackageManager.PERMISSION_GRANTED == requireContext().checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                && PackageManager.PERMISSION_GRANTED == requireContext().checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
     }
-
-    /*
-    private suspend fun getDirectoriesFromContentResolver(): ArrayList<DirectoryObject> {
-        val contentResolver = activity?.contentResolver ?: return arrayListOf()
-        val projection = arrayOf(
-            MediaStore.Images.Media.BUCKET_ID,
-            MediaStore.Images.Media.BUCKET_DISPLAY_NAME
-        )
-
-        val selection = "" //""${MediaStore.Images.Media.MIME_TYPE} == ? "
-        val selectionArgs = arrayOf<String>()
-
-        val sortOrder = "${MediaStore.Images.Media.DISPLAY_NAME} ASC"
-
-        val query = contentResolver.query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            projection,
-            selection,
-            selectionArgs,
-            sortOrder
-        )
-
-        val photos = ArrayList<PhotoObject>()
-        query?.use { cursor ->
-            // Cache column indices
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            val widthColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.WIDTH)
-            val heightColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)
-            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-            val mimeTypeColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
-            val addedColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
-            val modifiedColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED)
-
-            for(i in 0 until count) {
-                cursor.moveToNext()
-                val cId = cursor.getLong(idColumn)
-                val contentUri: Uri = ContentUris.withAppendedId(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    cId
-                )
-
-                val photoObject = PhotoObject().apply {
-                    id = cId
-                    width = cursor.getInt(widthColumn)
-                    height = cursor.getInt(heightColumn)
-                    uriString = contentUri.toString()
-                    name = cursor.getString(nameColumn)
-                    mimeType = cursor.getString(mimeTypeColumn)
-                    added = cursor.getString(addedColumn)
-                    modified = cursor.getString(modifiedColumn)
-                }
-
-                photos.add(photoObject)
-            }
-        }
-
-        return withContext(Dispatchers.IO) {
-            photos
-        }
-    }*/
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
@@ -250,19 +172,21 @@ class PhotoGridFragment : KmmBaseFragment() {
             && (permissions.contains(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             || permissions.contains(Manifest.permission.READ_EXTERNAL_STORAGE))
             && grantResults[0] == PackageManager.PERMISSION_GRANTED ) {
-            getPhotos()
+            getPhotosAndDirs()
+        } else {
+            // TODO show error alert
         }
     }
 
     // Provides data for the adapter to draw on the UI
-    data class PhotoGridItem(val name: String, val image: Bitmap, val photoObject: PhotoObject?, val dirObject: DirectoryObject?)
+    data class GridItem(val name: String, val image: Bitmap?, var isDir: Boolean, var photoId: Long = 0, var dirId: String = "")
 
-    inner class PhotoGridAdapter : BaseAdapter() {
+    inner class GridAdapter : BaseAdapter() {
         private val inflater = LayoutInflater.from(requireContext())
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val view = convertView ?: inflater.inflate(R.layout.photo_cell, parent, false)
-            val item = viewModel.photos[position]
+            val item = viewModel.gridItems[position]
             with(view.findViewById<AppCompatTextView>(R.id.photo_label)) {
                 // Label
                 text = item.name
@@ -270,21 +194,28 @@ class PhotoGridFragment : KmmBaseFragment() {
 
             with(view.findViewById<AppCompatImageView>(R.id.photo_image)) {
                 // Image
-                setImageBitmap(item.image)
+                if(item.isDir) {
+                    setImageResource(R.drawable.ic_filled_folder)
+                } else {
+                    setImageBitmap(item.image)
+                }
             }
+
             return view
         }
 
-        override fun getItem(position: Int): Any = viewModel.photos[position]
+        override fun getItem(position: Int): Any = viewModel.gridItems[position]
 
         override fun getItemId(position: Int): Long = position.toLong()
 
-        override fun getCount(): Int = viewModel.photos.size
+        override fun getCount(): Int = viewModel.gridItems.size
     }
 
     class PhotoGridViewModel: ViewModel() {
         var folderTitle = ""
-        val photos = ArrayList<PhotoGridItem>()
+        val photos = ArrayList<PhotoObject>()
+        val dirs = ArrayList<DirectoryObject>()
+        val gridItems = ArrayList<GridItem>()
     }
 
     companion object {

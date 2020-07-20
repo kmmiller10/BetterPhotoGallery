@@ -17,6 +17,7 @@
             android:id="@+id/photo_label"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:background="@android:color/background_light"
             android:gravity="center"
             app:layout_constraintBottom_toBottomOf="@+id/photo_image"
             app:layout_constraintStart_toStartOf="@+id/photo_image"

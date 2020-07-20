@@ -13,6 +13,7 @@ open class PhotoObject : RealmObject() {
     var height: Int = 0
 
     var uriString: String = ""
+    var path: String = ""
     var name: String = ""
     var mimeType: String = ""
 
