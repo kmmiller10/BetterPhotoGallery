@@ -1,6 +1,7 @@
 package me.kmmiller.better.photo.gallery
 
 import android.os.Bundle
+import android.view.MenuItem
 import androidx.lifecycle.ViewModel
 import io.realm.Realm
 import me.kmmiller.baseui.KmmBaseActivity
@@ -12,6 +13,9 @@ class MainActivity : KmmBaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         realm = Realm.getDefaultInstance()
+
+        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+
         if(savedInstanceState == null) {
             pushFragment(PhotoGridFragment(), replace = true, addToBackStack = false, tag = PhotoGridFragment::class.java.name)
         }
@@ -21,6 +25,25 @@ class MainActivity : KmmBaseActivity() {
         super.onDestroy()
         realm?.close()
         realm = null
+    }
+
+    override fun onBackPressed() {
+        val frag = supportFragmentManager.fragments.firstOrNull {
+            it is BackPressFragment
+        }
+
+        if((frag as? BackPressFragment)?.onBackPress() == false) {
+            // Not handled by frag
+            super.onBackPressed()
+        }
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if(item.itemId == android.R.id.home) {
+            onBackPressed()
+            return true
+        }
+        return super.onOptionsItemSelected(item)
     }
 
     // No bottom nav

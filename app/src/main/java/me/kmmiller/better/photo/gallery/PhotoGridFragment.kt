@@ -24,7 +24,7 @@ import me.kmmiller.baseui.KmmBaseFragment
 import me.kmmiller.better.photo.gallery.databinding.PhotoGridFragBinding
 import me.kmmiller.better.photo.gallery.extensions.*
 
-class PhotoGridFragment : KmmBaseFragment() {
+class PhotoGridFragment : KmmBaseFragment(), BackPressFragment {
     private lateinit var binding: PhotoGridFragBinding
     private lateinit var viewModel: PhotoGridViewModel
 
@@ -35,7 +35,7 @@ class PhotoGridFragment : KmmBaseFragment() {
         get() = mainActivity?.realm
 
     override fun getTitle(): String = viewModel.folderTitle
-    private fun updateTitleFromFolderPath(title: String) {
+    private fun setTitleFromPath(title: String) {
         viewModel.folderTitle = title
         activity?.title = getTitle()
     }
@@ -52,6 +52,7 @@ class PhotoGridFragment : KmmBaseFragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
         with(binding.photoGrid) {
             adapter = GridAdapter()
             onItemClickListener = AdapterView.OnItemClickListener { _, _, position, _ ->
@@ -59,7 +60,7 @@ class PhotoGridFragment : KmmBaseFragment() {
 
                     if(item.isDir) {
                         val dir = viewModel.dirs.firstOrNull { it.id == item.dirId} ?: return@OnItemClickListener
-                        updateAdapter(dir.id)
+                        updateAdapter(dir.id, true)
                     } else {
                         val photo = viewModel.photos.firstOrNull { it.id == item.photoId} ?: return@OnItemClickListener
                         // todo
@@ -84,18 +85,21 @@ class PhotoGridFragment : KmmBaseFragment() {
         }
     }
 
-    override fun onStart() {
-        super.onStart()
-        updateAdapter()
+    override fun onBackPress(): Boolean {
+        if(viewModel.path.size == 1) return false
+        viewModel.path.removeAt(viewModel.path.size - 1)
+        updateAdapter(viewModel.path.last(), false)
+        return true
     }
 
-    private fun updateAdapter(dirId: String = "") {
+    private fun updateAdapter(dirId: String = "", addToPath: Boolean) {
         viewModel.gridItems.clear()
-        viewModel.gridItems.addAll(buildGridItems(dirId))
+        viewModel.gridItems.addAll(buildGridItems(dirId, addToPath))
         (binding.photoGrid.adapter as? GridAdapter)?.notifyDataSetChanged()
     }
 
-    private fun buildGridItems(dirId: String): ArrayList<GridItem> {
+    private fun buildGridItems(dirId: String, addToPath: Boolean): ArrayList<GridItem> {
+        if(addToPath) viewModel.path.add(dirId)
         val cr = activity?.contentResolver ?: return arrayListOf()
         val gridItems = ArrayList<GridItem>()
 
@@ -117,7 +121,7 @@ class PhotoGridFragment : KmmBaseFragment() {
             }
         } else {
             val dir = viewModel.dirs.first { it.id == dirId }
-            updateTitleFromFolderPath(dir.name)
+            setTitleFromPath(dir.name)
 
             val sortedPhotos = viewModel.photos.filter { photo ->
                 photo.parentId == dirId
@@ -153,7 +157,10 @@ class PhotoGridFragment : KmmBaseFragment() {
                 viewModel.photos.addAll(photos)
                 viewModel.dirs.addAll(directories)
 
-                updateAdapter()
+                viewModel.path.clear()
+                setTitleFromPath("DCIM")
+
+                updateAdapter("", true)
             }
         }
     }
@@ -210,6 +217,7 @@ class PhotoGridFragment : KmmBaseFragment() {
 
     class PhotoGridViewModel: ViewModel() {
         var folderTitle = ""
+        val path = ArrayList<String>()
         val photos = ArrayList<PhotoObject>()
         val dirs = ArrayList<DirectoryObject>()
         val gridItems = ArrayList<GridItem>()
