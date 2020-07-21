@@ -22,10 +22,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.kmmiller.baseui.KmmBaseFragment
 import me.kmmiller.better.photo.gallery.databinding.PhotoGridFragBinding
-import me.kmmiller.better.photo.gallery.extensions.createGridItem
-import me.kmmiller.better.photo.gallery.extensions.getMediaStorePhotos
-import me.kmmiller.better.photo.gallery.extensions.getPhotoDirs
-import me.kmmiller.better.photo.gallery.extensions.linkPhotosToDir
+import me.kmmiller.better.photo.gallery.extensions.*
 
 class PhotoGridFragment : KmmBaseFragment() {
     private lateinit var binding: PhotoGridFragBinding
@@ -112,16 +109,20 @@ class PhotoGridFragment : KmmBaseFragment() {
 
             // Add root photos - id is not present in any directory
             val sortedPhotos = viewModel.photos.filter { photo ->
-                viewModel.dirs.none { it.childPhotoIds.contains(photo.id)}
+                photo.parentId.isEmpty()
             }.sortedBy { it.name }
+
             for(photo in sortedPhotos) {
                 gridItems.add(photo.createGridItem(cr))
             }
         } else {
             val dir = viewModel.dirs.first { it.id == dirId }
+            updateTitleFromFolderPath(dir.name)
+
             val sortedPhotos = viewModel.photos.filter { photo ->
-                dir.childPhotoIds.contains(photo.id)
+                photo.parentId == dirId
             }.sortedBy { it.name }
+
             for(photo in sortedPhotos) {
                 gridItems.add(photo.createGridItem(cr))
             }
@@ -133,11 +134,8 @@ class PhotoGridFragment : KmmBaseFragment() {
         viewModel.photos.clear()
         viewModel.dirs.clear()
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val photos = activity?.contentResolver?.getMediaStorePhotos() ?: arrayListOf() // Detached list, write to realm
-            var directories = ArrayList<DirectoryObject>()
-            activity?.getPhotoDirs()?.let { dirs ->
-                directories = dirs
-            }
+            val directories = getPhotoDirs()
+            val photos = directories.getPhotosFromDirectories()
 
             withContext(Dispatchers.Main) {
                 realm?.executeTransactionAsync { rlm ->
@@ -148,7 +146,6 @@ class PhotoGridFragment : KmmBaseFragment() {
                     // Copy dirs to realm
                     directories.forEach { dir ->
                         // Link child photos to parent directory
-                        dir.linkPhotosToDir(rlm)
                         rlm.copyToRealmOrUpdate(dir)
                     }
                 }
@@ -179,7 +176,7 @@ class PhotoGridFragment : KmmBaseFragment() {
     }
 
     // Provides data for the adapter to draw on the UI
-    data class GridItem(val name: String, val image: Bitmap?, var isDir: Boolean, var photoId: Long = 0, var dirId: String = "")
+    data class GridItem(val name: String, val image: Bitmap?, var isDir: Boolean, var photoId: String = "", var dirId: String = "")
 
     inner class GridAdapter : BaseAdapter() {
         private val inflater = LayoutInflater.from(requireContext())

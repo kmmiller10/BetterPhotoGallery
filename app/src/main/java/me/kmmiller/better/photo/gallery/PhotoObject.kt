@@ -7,16 +7,16 @@ import io.realm.annotations.RealmClass
 @RealmClass
 open class PhotoObject : RealmObject() {
     @PrimaryKey
-    var id: Long = 0
+    var id: String = ""
 
     var width: Int = 0
     var height: Int = 0
 
     var uriString: String = ""
     var path: String = ""
+    var parentId: String = ""
+
     var name: String = ""
     var mimeType: String = ""
-
-    var added: String = ""
-    var modified: String = ""
+    var modified: Long = 0
 }

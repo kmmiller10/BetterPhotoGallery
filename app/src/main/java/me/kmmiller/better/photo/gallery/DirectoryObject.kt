@@ -11,6 +11,5 @@ open class DirectoryObject: RealmObject() {
     var id: String = ""
 
     var name: String = ""
-    var relativePath: String = ""
-    var childPhotoIds: RealmList<Long> = RealmList()
+    var path: String = ""
 }
