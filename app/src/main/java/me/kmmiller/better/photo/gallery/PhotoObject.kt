@@ -19,4 +19,5 @@ open class PhotoObject : RealmObject() {
     var name: String = ""
     var mimeType: String = ""
     var modified: Long = 0
+    var isThumbnail: Boolean = false
 }

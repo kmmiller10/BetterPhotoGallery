@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Better Photo Gallery</string>
+    <string name="permission_required">Permission Required</string>
+    <string name="storage_access_required">Access to storage is required for this app to function. Permission can be enabled under app settings.</string>
 </resources>

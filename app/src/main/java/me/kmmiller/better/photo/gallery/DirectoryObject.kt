@@ -1,6 +1,5 @@
 package me.kmmiller.better.photo.gallery
 
-import io.realm.RealmList
 import io.realm.RealmObject
 import io.realm.annotations.PrimaryKey
 import io.realm.annotations.RealmClass
@@ -12,4 +11,5 @@ open class DirectoryObject: RealmObject() {
 
     var name: String = ""
     var path: String = ""
+    var isThumbnailDir: Boolean = false
 }

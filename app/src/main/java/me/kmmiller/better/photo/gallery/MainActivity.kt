@@ -2,10 +2,10 @@ package me.kmmiller.better.photo.gallery
 
 import android.os.Bundle
 import android.view.MenuItem
-import androidx.lifecycle.ViewModel
 import io.realm.Realm
 import me.kmmiller.baseui.KmmBaseActivity
 import me.kmmiller.baseui.navigation.BottomNavItemModel
+import me.kmmiller.better.photo.gallery.extensions.withNullable
 
 class MainActivity : KmmBaseActivity() {
     var realm: Realm? = null
@@ -13,8 +13,6 @@ class MainActivity : KmmBaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         realm = Realm.getDefaultInstance()
-
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
         if(savedInstanceState == null) {
             pushFragment(PhotoGridFragment(), replace = true, addToBackStack = false, tag = PhotoGridFragment::class.java.name)
@@ -36,6 +34,14 @@ class MainActivity : KmmBaseActivity() {
             // Not handled by frag
             super.onBackPressed()
         }
+    }
+
+    fun updateToolbarBackBtn(showBack: Boolean) {
+        withNullable(supportActionBar) {
+            setDisplayHomeAsUpEnabled(showBack)
+            setDisplayShowHomeEnabled(showBack)
+        }
+        invalidateOptionsMenu()
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
