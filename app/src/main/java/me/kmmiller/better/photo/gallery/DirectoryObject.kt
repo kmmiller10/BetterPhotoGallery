@@ -7,7 +7,9 @@ import io.realm.annotations.RealmClass
 @RealmClass
 open class DirectoryObject: RealmObject() {
     @PrimaryKey
-    var id: Long = 0
+    var id: String = ""
 
     var name: String = ""
+    var path: String = ""
+    var isThumbnailDir: Boolean = false
 }
